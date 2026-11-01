@@ -432,8 +432,6 @@ struct fluid_dls_font
                           fluid_sfont_t *sfont,
                           const fluid_file_callbacks_t *fcbs,
                           const char *filename,
-                          fluid_long_long_t offset,
-                          int bank_offset,
                           uint32_t output_sample_rate,
                           bool try_mlock);
 
@@ -1465,12 +1463,9 @@ fluid_dls_font::fluid_dls_font(fluid_synth_t *synth,
                                fluid_sfont_t *sfont,
                                const fluid_file_callbacks_t *fcbs_in,
                                const char *filename,
-                               fluid_long_long_t offset,
-                               int bank_offset_in,
                                uint32_t output_sample_rate,
                                bool try_mlock)
-    : synth(synth), sfont(sfont), fcbs(*fcbs_in), output_sample_rate(output_sample_rate),
-      filename(filename), bank_offset(bank_offset_in)
+    : synth(synth), sfont(sfont), fcbs(*fcbs_in), output_sample_rate(output_sample_rate), filename(filename)
 {
     // Get basic file information
 
@@ -1492,14 +1487,20 @@ fluid_dls_font::fluid_dls_font(fluid_synth_t *synth,
         throw std::runtime_error{ "Get end of file position failed" };
     }
 
-    if(offset < 0 || offset > filesize || filesize - offset < 12)
-    {
-        throw std::runtime_error{ "File too short! (< 12 bytes)" };
-    }
+    // Seek to the start of the DLS bank, which is embedded if this is an RMIDI file
+    fluid_rmidi_info_t rmidi;
 
-    if(fcbs.fseek(file, offset, SEEK_SET) == FLUID_FAILED)
+    if(fluid_rmidi_seek_bank(&fcbs, file, filesize, FLUID_RMIDI_BANK_DLS, &rmidi) == FLUID_FAILED)
     {
         throw std::runtime_error{ "Seek to DLS bank failed" };
+    }
+
+    fluid_long_long_t offset = rmidi.is_rmidi ? rmidi.bank_pos : 0;
+    bank_offset = rmidi.bank_offset;
+
+    if(filesize - offset < 12)
+    {
+        throw std::runtime_error{ "File too short! (< 12 bytes)" };
     }
 
     // Parse DLS
@@ -3080,75 +3081,8 @@ static fluid_mod_t *fluid_dls_default_mod_list()
     return list;
 }
 
-/*
- * Locate the DLS bank to load. For a plain DLS file this is the whole file.
- * For an RMIDI file this is the embedded bank, unless it contains an SF2
- * bank instead, in which case this loader must not handle the file.
- *
- * @return FALSE if the file is a malformed RMIDI file or contains a bank that
- *  this loader cannot handle, TRUE otherwise.
- */
-static bool fluid_dls_find_bank(fluid_sfloader_t *loader, const char *filename,
-                                fluid_long_long_t *offset, int *bank_offset) noexcept
-{
-    auto *fcbs = &loader->file_callbacks;
-    void *file = fcbs->fopen(filename);
-    fluid_long_long_t filesize;
-    fluid_rmidi_info_t rmidi;
-    int status;
-
-    if(file == nullptr)
-    {
-        /* Let the constructor report the error. */
-        return true;
-    }
-
-    if(fcbs->fseek(file, 0, SEEK_END) != FLUID_OK)
-    {
-        fcbs->fclose(file);
-        return true;
-    }
-
-    filesize = fcbs->ftell(file);
-
-    if(filesize == FLUID_FAILED)
-    {
-        fcbs->fclose(file);
-        return true;
-    }
-
-    status = fluid_rmidi_parse(fcbs, file, filesize, &rmidi);
-    fcbs->fclose(file);
-
-    if(status < 0)
-    {
-        return false;
-    }
-
-    if(status > 0)
-    {
-        if(rmidi.bank_type != FLUID_RMIDI_BANK_DLS)
-        {
-            return false;
-        }
-
-        *offset = rmidi.bank_pos;
-        *bank_offset = rmidi.bank_offset;
-    }
-
-    return true;
-}
-
 static fluid_sfont_t *fluid_dls_loader_load(fluid_sfloader_t *loader, const char *filename) noexcept
 {
-    fluid_long_long_t offset = 0;
-    int bank_offset = 0;
-
-    if(!fluid_dls_find_bank(loader, filename, &offset, &bank_offset))
-    {
-        return nullptr;
-    }
-
     auto *sfont = new_fluid_sfont(fluid_dls_sfont_get_name,
                                   fluid_dls_sfont_get_preset,
                                   fluid_dls_iteration_start,
@@ -3185,8 +3119,7 @@ static fluid_sfont_t *fluid_dls_loader_load(fluid_sfloader_t *loader, const char
     }
 
     auto *dlsfont =
-        new_fluid_dls_font(sfloader_data->synth, sfont, &loader->file_callbacks, filename,
-                           offset, bank_offset, sample_rate, try_mlock);
+        new_fluid_dls_font(sfloader_data->synth, sfont, &loader->file_callbacks, filename, sample_rate, try_mlock);
 
     if(dlsfont == nullptr)
     {

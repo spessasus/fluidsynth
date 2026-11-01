@@ -386,7 +386,6 @@ SFData *fluid_sffile_open(const char *fname, const fluid_file_callbacks_t *fcbs)
     SFData *sf;
     fluid_long_long_t fsize = 0;
     fluid_rmidi_info_t rmidi;
-    int rmidi_status;
 
     if(!(sf = FLUID_NEW(SFData)))
     {
@@ -434,36 +433,14 @@ SFData *fluid_sffile_open(const char *fname, const fluid_file_callbacks_t *fcbs)
         goto error_exit;
     }
 
-    rmidi_status = fluid_rmidi_parse(fcbs, sf->sffd, fsize, &rmidi);
-
-    if(rmidi_status < 0)
+    if(fluid_rmidi_seek_bank(fcbs, sf->sffd, fsize, FLUID_RMIDI_BANK_SF2, &rmidi) != FLUID_OK)
     {
+        FLUID_LOG(FLUID_ERR, "Failed to seek to the SoundFont data");
         goto error_exit;
     }
 
-    if(rmidi_status > 0)
-    {
-        if(rmidi.bank_type != FLUID_RMIDI_BANK_SF2)
-        {
-            /* Let the DLS loader handle an embedded DLS bank. */
-            FLUID_LOG(FLUID_DBG, "RMIDI file does not contain an embedded SoundFont");
-            goto error_exit;
-        }
-
-        sf->is_rmidi = TRUE;
-        sf->rmidi_bank_offset = rmidi.bank_offset;
-
-        if(fcbs->fseek(sf->sffd, rmidi.bank_pos, SEEK_SET) == FLUID_FAILED)
-        {
-            FLUID_LOG(FLUID_ERR, "Failed to seek to embedded SoundFont");
-            goto error_exit;
-        }
-    }
-    else if(fcbs->fseek(sf->sffd, 0, SEEK_SET) == FLUID_FAILED)
-    {
-        FLUID_LOG(FLUID_ERR, "Rewind to start of file failed");
-        goto error_exit;
-    }
+    sf->is_rmidi = rmidi.is_rmidi;
+    sf->rmidi_bank_offset = rmidi.bank_offset;
 
     if(!load_header(sf))
     {

@@ -61,6 +61,11 @@ int fluid_rmidi_parse(const fluid_file_callbacks_t *fcbs, void *file,
 /* Parse an RMIDI file from a standard FILE handle. */
 int fluid_rmidi_parse_fp(FILE *fp, fluid_long_long_t filesize, fluid_rmidi_info_t *info);
 
+/* Seek to the start of the sound bank of the given type in an open file. */
+int fluid_rmidi_seek_bank(const fluid_file_callbacks_t *fcbs, void *file,
+                          fluid_long_long_t filesize, fluid_rmidi_bank_type type,
+                          fluid_rmidi_info_t *info);
+
 #ifdef __cplusplus
 }
 #endif
